@@ -1,0 +1,48 @@
+# SALIS AUTO — gitleaks configuration.
+#
+# CI runs gitleaks over full history (.github/workflows/ci.yml, job `security`).
+# This file adds ONE rule to gitleaks' default ruleset; it does not replace it.
+# A .gitleaks.toml without `[extend] useDefault = true` silently REPLACES the
+# defaults, and every AWS key, GitHub token and private key the stock rules
+# catch would then go unscanned while the job stayed green. Keep that line.
+#
+# Why a rule for database dumps at all: a pg_dump of a live database, with real
+# user rows and password hashes, sat in this tree (audits/slsdb.sql) and no
+# secret rule noticed, because a bcrypt hash is not a credential by any default
+# rule's reading. The tree itself is guarded by the "No database dumps in the
+# tracked tree" step of the same job; this rule is the half that step cannot
+# do — a dump added and deleted again inside one push or pull request never
+# reaches the tip, but it does reach history.
+#
+# Deliberately NOT a rule here: a bcrypt/argon2 hash rule. One legitimate hash
+# already lives in history (a fixture in apps-v2), so a full-history scan would
+# go red on it forever. Hash density is checked on the tip by the tree step
+# instead, with a threshold.
+
+title = "SALIS AUTO gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "sql-database-dump"
+description = "Database dump committed to the repository (pg_dump/mysqldump output)"
+# The dump banners pg_dump and mysqldump write, and pg_dump's per-table data
+# block. Anchored to the start of a line so prose quoting them does not match.
+regex = '''(?m)^(?:-- PostgreSQL database dump|-- Dumped by pg_dump|-- MySQL dump|COPY [^\s]+ \([^)]*\) FROM stdin;)'''
+# gitleaks lower-cases each fragment before the keyword prefilter, so these
+# are lower-case.
+keywords = ["database dump", "pg_dump", "mysql dump", "from stdin"]
+
+# Singular `allowlist`: accepted by every gitleaks 8.x the action may install.
+[rules.allowlist]
+paths = [
+  # Drizzle's generated migrations are schema DDL, never data, and are the one
+  # place SQL is expected to live.
+  '''^server/drizzle/''',
+  # TEMPORARY. The one historical dump, removed from the tree but still present
+  # in commit a0588f97 and its descendants. Without this entry any full-history
+  # scan fails on that commit until the owner purges it. Delete this entry once
+  # the history purge is done — after that the path must never match again.
+  '''^audits/slsdb\.sql$''',
+]
